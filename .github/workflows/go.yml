@@ -1,0 +1,44 @@
+---
+name: Go
+on:
+  push:
+    tags:
+      - v*
+    branches:
+      - main
+  pull_request:
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v2
+        with:
+          version: v1.44.0
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: 0
+    steps:
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v2
+        with:
+          go-version: ^1.17
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Vet
+        run: go vet -v ./...
+      - name: Test
+        run: go test -v ./...
+      - name: Build binary (for testing)
+        run: go build -v -trimpath -ldflags="-s -w -buildid=" -o staticassetlint .
+      - name: Upload binary (for testing)
+        uses: actions/upload-artifact@v2
+        with:
+          name: staticassetlint
+          path: staticassetlint
+          if-no-files-found: error
