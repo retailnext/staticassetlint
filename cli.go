@@ -25,17 +25,25 @@ import (
 
 var CLI struct {
 	Verbose bool     `flag:"" help:"Print the names of files with valid names."`
+	Skip    []string `flag:"" sep:"none" help:"Skip checking file with names matching any of these regex patterns."`
 	Dirs    []string `arg:"" required:"" help:"Directories containing files to check." type:"existingdir"`
 }
 
 func main() {
 	_ = kong.Parse(&CLI)
+
+	scanner, err := digestnamed.NewScanner(CLI.Skip)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "ERROR: %s\n", err.Error())
+		os.Exit(1)
+	}
+
 	var exitError bool
 
 	reports := make([]digestnamed.Report, len(CLI.Dirs))
 	for i := range CLI.Dirs {
 		var err error
-		reports[i], err = digestnamed.ScanDirectory(CLI.Dirs[i])
+		reports[i], err = scanner.ScanDirectory(CLI.Dirs[i])
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "ERROR: %s\n", err.Error())
 			exitError = true
@@ -55,9 +63,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	var passed, failed, nonRegular []string
+	var passed, skipped, failed, nonRegular []string
 	for _, report := range reports {
 		passed = append(passed, report.Passed...)
+		skipped = append(skipped, report.Skipped...)
 		failed = append(failed, report.Failed...)
 		nonRegular = append(nonRegular, report.NonRegular...)
 	}
@@ -80,11 +89,17 @@ func main() {
 		exitError = true
 	}
 
-	if exitError {
-		os.Exit(1)
+	if CLI.Verbose {
+		sort.Strings(skipped)
+		_, _ = fmt.Fprintf(os.Stdout, "INFO: skipped checking %d files:\n", len(skipped))
+		for _, path := range skipped {
+			_, _ = fmt.Fprintf(os.Stdout, "\t%q\n", path)
+		}
+	} else {
+		_, _ = fmt.Fprintf(os.Stdout, "INFO: skipped checking %d files\n", len(skipped))
 	}
 
-	if len(passed) == 0 {
+	if len(passed) == 0 && len(skipped) == 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "WARNING: no files with valid names found\n")
 		return
 	}
@@ -97,5 +112,9 @@ func main() {
 		}
 	} else {
 		_, _ = fmt.Fprintf(os.Stdout, "INFO: found %d files with valid names\n", len(passed))
+	}
+
+	if exitError {
+		os.Exit(1)
 	}
 }
