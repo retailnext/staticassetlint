@@ -28,33 +28,7 @@ import (
 	"testing"
 )
 
-func TestExtractHexDigest(t *testing.T) {
-	cases := map[string]string{
-		"vendor-c2293867abd250a96bb64cc0c78ed603.css":                         "c2293867abd250a96bb64cc0c78ed603",
-		"vendor-C2293867ABD250A96BB64CC0C78ED603.css":                         "c2293867abd250a96bb64cc0c78ed603",
-		"vendor-415ab40ae9b7cc4e66d6769cb2c08106e8293b48.css":                 "415ab40ae9b7cc4e66d6769cb2c08106e8293b48",
-		"9e58e1c69c2c77d6be328dd795d7154f25e5ea3718c2c0d0f6ea6017cfb8b3dc.gz": "9e58e1c69c2c77d6be328dd795d7154f25e5ea3718c2c0d0f6ea6017cfb8b3dc",
-	}
-	for input, expected := range cases {
-		result := extractHexDigest(input)
-		if result != expected {
-			t.Fatalf("input:%q expected:%q result:%q", input, expected, result)
-		}
-	}
-}
-
 func TestScanDirectory(t *testing.T) {
-	dir, err := os.MkdirTemp("", "lint-TestScanDirectory-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		cleanupErr := os.RemoveAll(dir)
-		if cleanupErr != nil {
-			panic(cleanupErr)
-		}
-	})
-
 	cases := scanTest{
 		{
 			name:     "expectPass/md5-" + md5DigestOf("md5"),
@@ -100,7 +74,16 @@ func TestScanDirectory(t *testing.T) {
 			contents:   "match",
 			expectFail: true,
 		},
-
+		{
+			name:          "expectSkipped/ignoreme-aaaaffff.css",
+			contents:      "bar",
+			expectSkipped: true,
+		},
+		{
+			name:          "expectSkipped/ignoreme-aaaaffff.js",
+			contents:      "bar",
+			expectSkipped: true,
+		},
 		{
 			name:             "expectNonRegular/relative",
 			contents:         "../expectFail/not-a-hash",
@@ -123,23 +106,39 @@ func TestScanDirectory(t *testing.T) {
 		})
 	}
 
-	err = cases.setup(dir)
-	if err != nil {
-		t.Fatalf("setup failed: %v+", err)
-	}
-
-	results, err := ScanDirectory(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = cases.check(results, dir)
+	err := cases.run(t.Cleanup, []string{`ignoreme-[0-9a-f]{8}\.(?:css|js)`})
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
 type scanTest []testFile
+
+func (st scanTest) run(registerCleanup func(func()), ignorePatterns []string) error {
+	scanner, err := NewScanner(ignorePatterns)
+	if err != nil {
+		return err
+	}
+	dir, err := os.MkdirTemp("", "lint-scan-test-directory-*")
+	if err != nil {
+		return err
+	}
+	registerCleanup(func() {
+		cleanupErr := os.RemoveAll(dir)
+		if cleanupErr != nil {
+			panic(cleanupErr)
+		}
+	})
+	err = st.setup(dir)
+	if err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+	results, err := scanner.ScanDirectory(dir)
+	if err != nil {
+		return err
+	}
+	return st.check(results, dir)
+}
 
 func (st scanTest) setup(dir string) error {
 	for _, tf := range st {
@@ -152,7 +151,7 @@ func (st scanTest) setup(dir string) error {
 }
 
 func (st scanTest) check(report Report, dir string) error {
-	var expectPassed, expectFailed, expectNonRegular, expectFileErrors int
+	var expectPassed, expectSkipped, expectFailed, expectNonRegular, expectFileErrors int
 
 	for _, tf := range st {
 		err := tf.check(report, dir)
@@ -167,6 +166,8 @@ func (st scanTest) check(report Report, dir string) error {
 			expectFileErrors++
 		case tf.expectNonRegular:
 			expectNonRegular++
+		case tf.expectSkipped:
+			expectSkipped++
 		default:
 			expectPassed++
 		}
@@ -181,6 +182,9 @@ func (st scanTest) check(report Report, dir string) error {
 	if expectPassed != len(report.Passed) {
 		return fmt.Errorf("expected %d Passed, got %d", expectPassed, len(report.Passed))
 	}
+	if expectSkipped != len(report.Skipped) {
+		return fmt.Errorf("expected %d Skipped, got %d", expectSkipped, len(report.Skipped))
+	}
 	if expectFileErrors != len(report.FileErrors) {
 		return fmt.Errorf("expected %d FileErrors, got %d", expectFileErrors, len(report.FileErrors))
 	}
@@ -194,6 +198,7 @@ type testFile struct {
 	expectNonRegular bool
 	expectError      bool
 	expectFail       bool
+	expectSkipped    bool
 }
 
 func (tf testFile) setup(dir string) error {
@@ -240,6 +245,14 @@ func (tf testFile) check(report Report, dir string) error {
 		i := sort.SearchStrings(report.Failed, path)
 		if report.Failed[i] != path {
 			return fmt.Errorf("missing from Failed: %q", path)
+		}
+		return nil
+	}
+
+	if tf.expectSkipped {
+		i := sort.SearchStrings(report.Skipped, path)
+		if report.Skipped[i] != path {
+			return fmt.Errorf("missing from Skipped: %q", path)
 		}
 		return nil
 	}

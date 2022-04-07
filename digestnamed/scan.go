@@ -19,37 +19,79 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"hash"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	"go.uber.org/multierr"
 )
 
+func NewScanner(skipPatterns []string) (Scanner, error) {
+	compiledPatterns, err := makeIgnorePatterns(skipPatterns)
+	if err != nil {
+		return Scanner{}, err
+	}
+	return Scanner{compiledPatterns}, nil
+}
+
+type Scanner struct {
+	ignoreMatchingFileNames ignorePatterns
+}
+
 // ScanDirectory checks that the files in a directory and its children are named based on their digest contents.
 // This only returns an error if there was a problem traversing the directory and its children;
 // any errors opening/reading files are reported in the Report instead.
-func ScanDirectory(path string) (Report, error) {
+func (s Scanner) ScanDirectory(path string) (Report, error) {
 	var results Report
-	err := filepath.WalkDir(path, results.walkDirFunc)
+	err := filepath.WalkDir(path, s.walkDirFunc(&results))
 	if err != nil {
 		return Report{}, err
 	}
 	sort.Strings(results.Passed)
+	sort.Strings(results.Skipped)
 	sort.Strings(results.NonRegular)
 	sort.Strings(results.Failed)
 	return results, nil
 }
 
+func (s Scanner) walkDirFunc(report *Report) fs.WalkDirFunc {
+	return func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		mode := d.Type()
+		if mode.IsDir() {
+			// Permit traversal into directories; avoid logging as non-regular.
+			return nil
+		}
+		if !mode.IsRegular() {
+			// Log as non-regular. This may be treated as a failure.
+			report.NonRegular = append(report.NonRegular, path)
+			return nil
+		}
+
+		if s.ignoreMatchingFileNames.MatchString(filepath.Base(path)) {
+			report.Skipped = append(report.Skipped, path)
+			return nil
+		}
+
+		report.handleFile(path)
+
+		return nil
+	}
+}
+
 type Report struct {
 	// Passed files contain their digest in the filename
 	Passed []string
+
+	// Skipped files weren't checked because they matched an allowed pattern
+	Skipped []string
 
 	// Failed files don't contain a matching digest in the filename
 	Failed []string
@@ -58,27 +100,6 @@ type Report struct {
 	NonRegular []string
 
 	FileErrors map[string]error
-}
-
-func (s *Report) walkDirFunc(path string, dirEntry fs.DirEntry, err error) error {
-	if err != nil {
-		return err
-	}
-
-	mode := dirEntry.Type()
-	if mode.IsDir() {
-		// Permit traversal into directories; avoid logging as non-regular.
-		return nil
-	}
-	if !mode.IsRegular() {
-		// Log as non-regular. This may be treated as a failure.
-		s.NonRegular = append(s.NonRegular, path)
-		return nil
-	}
-
-	s.handleFile(path)
-
-	return nil
 }
 
 func (s *Report) handleFile(path string) {
@@ -111,26 +132,6 @@ func (s *Report) handleFile(path string) {
 	}
 	s.Failed = append(s.Failed, path)
 }
-
-func makeHexRegexp(lengths ...int) *regexp.Regexp {
-	sortedLengths := append([]int(nil), lengths...)
-	sort.Sort(sort.Reverse(sort.IntSlice(sortedLengths)))
-
-	var acc strings.Builder
-	for i, digits := range sortedLengths {
-		if i > 0 {
-			if _, err := acc.WriteRune('|'); err != nil {
-				panic(err)
-			}
-		}
-		if _, err := fmt.Fprintf(&acc, "[0-9a-f]{%d}|[0-9A-F]{%d}", digits, digits); err != nil {
-			panic(err)
-		}
-	}
-	return regexp.MustCompile(acc.String())
-}
-
-var hexPattern = makeHexRegexp(64, 40, 32)
 
 func extractHexDigest(name string) string {
 	name = filepath.Base(name)
