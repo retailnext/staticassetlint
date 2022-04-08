@@ -36,7 +36,7 @@ Example:
 ```shell
 staticassetlint \
     --skip '.*-[0-9a-f]{32}.(?:js|map|css)' \
-    --skip 'chunk.\d{3}\.[0-9a-f]{20}\.(?:js|js\.LICENSE\.txt|map)' \
+    --skip 'chunk.\d{3}\.[0-9a-f]{20}\.(?:js|js\.LICENSE\.txt|map|css)' \
     /workspace/web_root/assets
 ```
 
