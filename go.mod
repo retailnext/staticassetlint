@@ -4,5 +4,5 @@ go 1.18
 
 require (
 	github.com/alecthomas/kong v0.7.1
-	go.uber.org/multierr v1.10.0
+	go.uber.org/multierr v1.11.0
 )
