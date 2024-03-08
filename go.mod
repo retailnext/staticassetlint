@@ -3,6 +3,6 @@ module github.com/retailnext/staticassetlint
 go 1.18
 
 require (
-	github.com/alecthomas/kong v0.8.1
+	github.com/alecthomas/kong v0.9.0
 	go.uber.org/multierr v1.11.0
 )
