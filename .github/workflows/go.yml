@@ -41,7 +41,7 @@ jobs:
       - name: Build binary (for testing)
         run: go build -v -trimpath -ldflags="-s -w -buildid=" -o staticassetlint .
       - name: Upload binary (for testing)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: staticassetlint
           path: staticassetlint
